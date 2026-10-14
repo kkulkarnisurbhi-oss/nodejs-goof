@@ -1,0 +1,39 @@
+name: sca-gate
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  sca-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: snyk/actions/setup@master
+      - name: Generate SBOM (CycloneDX)
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: sbom.cdx.json
+          upload-artifact: false
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.cdx.json
+      - name: Inspect SBOM
+        run: |
+          echo "Format: $(jq -r '.bomFormat + " " + .specVersion' sbom.cdx.json)"
+          echo "Components: $(jq '.components | length' sbom.cdx.json)"
+          jq -r '.components[] | select(.name=="qs") | .purl' sbom.cdx.json
+      - name: SBOM gate (Grype)
+        uses: anchore/scan-action@v7
+        with:
+          sbom: sbom.cdx.json
+          fail-build: true
+          severity-cutoff: high
+          output-format: table
+      - name: Snyk SCA gate
+        if: always()
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: snyk test --severity-threshold=high --fail-on=upgradable
